@@ -1,16 +1,14 @@
-// FILENAME: ai_terminal.ino (Version with LCD Loop Fix)
-
 #include "LedControl.h"
 #include "LiquidCrystal.h"
 #include "font.h" 
 
-// --- Pin Definitions (Your Original, Unchanged Pins) ---
+// --- Pin Definitions ---
 const int latchPin_7Segment = 24, clockPin_7Segment = 26, dataPin_7Segment = 22;
 const int dataInPin_Matrix = 12, loadCsPin_Matrix = 11, clockPin_Matrix = 10;
 const int rsPin_LCD = 9, enablePin_LCD = 8, d4Pin_LCD = 2, d5Pin_LCD = 3, d6Pin_LCD = 4, d7Pin_LCD = 5;
 const int ledPin_Indicator = 13, pirPin_Sensor = 7;
 
-// --- All other global variables are unchanged ---
+// --- Global Variables ---
 unsigned char sevenSegmentTable[] = {0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f,0x77,0x7c,0x39,0x5e,0x79,0x71,0x00};
 volatile int pirMotionCount = 0;
 LedControl lc = LedControl(dataInPin_Matrix, clockPin_Matrix, loadCsPin_Matrix, 1);
@@ -31,7 +29,7 @@ unsigned long lastPirPoll = 0;
 const unsigned long pirPollInterval = 50;
 bool pirActiveHigh = true;
 int lastPirState = 0;
-char messageBuffer[256];
+char messageBuffer[256]; // Buffer for incoming serial data
 int serialIdx = 0;
 bool messageReady = false;
 
@@ -53,20 +51,77 @@ void setup() {
 
 void loop() {
   pollPIRIfNeeded();
-  processSerial();
+  processSerial(); // Check for and handle incoming messages
   updateLCD();
   displayOn7Segment(pirMotionCount % 10);
   updateMatrixScroll();
 }
 
-// ... displayOn7Segment, checkPIR, pollPIRIfNeeded, processSerial are all unchanged ...
-void displayOn7Segment(unsigned char num) { digitalWrite(latchPin_7Segment, LOW); shiftOut(dataPin_7Segment, clockPin_7Segment, MSBFIRST, sevenSegmentTable[num]); digitalWrite(latchPin_7Segment, HIGH); }
-void checkPIR() { int raw = digitalRead(pirPin_Sensor); int newVal = pirActiveHigh ? raw : !raw; if (newVal && !lastPirState) { pirMotionCount++; } lastPirState = newVal; pirValue = newVal; digitalWrite(ledPin_Indicator, pirValue); }
-void pollPIRIfNeeded() { unsigned long now = millis(); if (now - lastPirPoll >= pirPollInterval) { lastPirPoll = now; checkPIR(); } }
-void processSerial() { while (Serial.available()) { char c = (char)Serial.read(); if (c == '\n') { messageBuffer[serialIdx] = '\0'; messageReady = true; serialIdx = 0; } else { if (serialIdx < sizeof(messageBuffer) - 1) messageBuffer[serialIdx++] = c; } } if (messageReady) { if (strncmp(messageBuffer, "USER:", 5) == 0) { userQuestion = String(messageBuffer + 5); questionScrollPos = 0; } else if (strncmp(messageBuffer, "GEMMA:", 6) == 0) { gemmaAnswer = String(messageBuffer + 6); answerScrollPos = 0; matrixTextPos = 0; matrixCol = 0; } messageReady = false; } }
+void displayOn7Segment(unsigned char num) { 
+  digitalWrite(latchPin_7Segment, LOW); 
+  shiftOut(dataPin_7Segment, clockPin_7Segment, MSBFIRST, sevenSegmentTable[num]); 
+  digitalWrite(latchPin_7Segment, HIGH); 
+}
 
+void checkPIR() { 
+  int raw = digitalRead(pirPin_Sensor); 
+  int newVal = pirActiveHigh ? raw : !raw; 
+  if (newVal && !lastPirState) { 
+    pirMotionCount++; 
+  } 
+  lastPirState = newVal; 
+  pirValue = newVal; 
+  digitalWrite(ledPin_Indicator, pirValue); 
+}
 
-// --- THIS IS THE CORRECTED FUNCTION ---
+void pollPIRIfNeeded() { 
+  unsigned long now = millis(); 
+  if (now - lastPirPoll >= pirPollInterval) { 
+    lastPirPoll = now; 
+    checkPIR(); 
+  } 
+}
+
+// --- UPDATED TO HANDLE CHUNKED DATA ---
+void processSerial() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      messageBuffer[serialIdx] = '\0'; // Null-terminate the string
+      messageReady = true;
+      serialIdx = 0; // Reset for next message
+    } else {
+      if (serialIdx < sizeof(messageBuffer) - 1) {
+        messageBuffer[serialIdx++] = c; // Add char to buffer
+      }
+    }
+  }
+
+  if (messageReady) {
+    if (strncmp(messageBuffer, "USER:", 5) == 0) {
+      userQuestion = String(messageBuffer + 5);
+      questionScrollPos = 0; // Reset scroll
+    } 
+    else if (strncmp(messageBuffer, "GEMMA_START:", 12) == 0) {
+      gemmaAnswer = String(messageBuffer + 12); // Start new answer
+      answerScrollPos = 0;
+      matrixTextPos = 0;
+      matrixCol = 0;
+    }
+    else if (strncmp(messageBuffer, "GEMMA:", 6) == 0) {
+      // Also handles short messages and news updates
+      gemmaAnswer = String(messageBuffer + 6); // Start new answer
+      answerScrollPos = 0;
+      matrixTextPos = 0;
+      matrixCol = 0;
+    }
+    else if (strncmp(messageBuffer, "GEMMA_APPEND:", 13) == 0) {
+      gemmaAnswer += String(messageBuffer + 13); // Append to existing answer
+    }
+    messageReady = false; // We have processed the message
+  }
+}
+
 void updateLCD() {
   unsigned long now = millis();
   if (now - lastLcdScroll < lcdScrollInterval) return;
@@ -74,8 +129,7 @@ void updateLCD() {
 
   // Line 1: Scroll User Question
   lcd.setCursor(0, 0);
-  String qPadded = "   " + userQuestion + "   "; // Add padding for a nice loop
-  // --- FIX --- The confusing special case for short strings has been REMOVED.
+  String qPadded = "   " + userQuestion + "   ";
   String qSub = qPadded.substring(questionScrollPos, questionScrollPos + 16);
   lcd.print(qSub);
   for (int i = qSub.length(); i < 16; i++) lcd.print(' ');
@@ -84,8 +138,7 @@ void updateLCD() {
 
   // Line 2: Scroll Gemma Answer
   lcd.setCursor(0, 1);
-  String aPadded = "   " + gemmaAnswer + "   "; // Add padding for a nice loop
-  // --- FIX --- The confusing special case for short strings has been REMOVED.
+  String aPadded = "   " + gemmaAnswer + "   ";
   String aSub = aPadded.substring(answerScrollPos, answerScrollPos + 16);
   lcd.print(aSub);
   for (int i = aSub.length(); i < 16; i++) lcd.print(' ');
@@ -93,5 +146,26 @@ void updateLCD() {
   if (answerScrollPos > (aPadded.length() - 16)) answerScrollPos = 0;
 }
 
-// ... updateMatrixScroll is unchanged ...
-void updateMatrixScroll() { unsigned long now = millis(); if (now - lastMatrixScrollTime < matrixScrollInterval) return; lastMatrixScrollTime = now; for (int i = 0; i < 7; i++) { matrixBuffer[i] = matrixBuffer[i + 1]; } char currentChar = gemmaAnswer[matrixTextPos]; int fontIndex = currentChar - 32; if (fontIndex < 0 || fontIndex >= FONT_LENGTH) fontIndex = 0; matrixBuffer[7] = pgm_read_byte(&(font[fontIndex][matrixCol])); for (int i = 0; i < 8; i++) { lc.setRow(0, i, matrixBuffer[i]); } matrixCol++; if (matrixCol >= 8) { matrixCol = 0; matrixTextPos++; if (matrixTextPos >= gemmaAnswer.length()) { matrixTextPos = 0; } } }
+void updateMatrixScroll() {
+  unsigned long now = millis();
+  if (now - lastMatrixScrollTime < matrixScrollInterval) return;
+  lastMatrixScrollTime = now;
+  for (int i = 0; i < 7; i++) {
+    matrixBuffer[i] = matrixBuffer[i + 1];
+  }
+  char currentChar = gemmaAnswer[matrixTextPos];
+  int fontIndex = currentChar - 32;
+  if (fontIndex < 0 || fontIndex >= FONT_LENGTH) fontIndex = 0;
+  matrixBuffer[7] = pgm_read_byte(&(font[fontIndex][matrixCol]));
+  for (int i = 0; i < 8; i++) {
+    lc.setRow(0, i, matrixBuffer[i]);
+  }
+  matrixCol++;
+  if (matrixCol >= 8) {
+    matrixCol = 0;
+    matrixTextPos++;
+    if (matrixTextPos >= gemmaAnswer.length()) {
+      matrixTextPos = 0;
+    }
+  }
+}

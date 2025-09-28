@@ -1,5 +1,3 @@
-# FILENAME: ai.py (Robust, General Scraper Version)
-
 import json
 import os
 import sys
@@ -9,99 +7,67 @@ import argparse
 from llama_cpp import Llama
 import requests
 from bs4 import BeautifulSoup
+import speech_recognition as sr
 
-# --- SETTINGS & All other setup code is UNCHANGED ---
+# --- SETTINGS ---
 USE_ARDUINO = True
 model_path = "/home/asher/.lmstudio/models/lmstudio-community/gemma-3-1b-it-GGUF/gemma-3-1b-it-Q4_K_M.gguf"
 SERIAL_PORT = '/dev/ttyACM0' 
 BAUD_RATE = 9600
 ser = None 
 
+# --- Helper Classes (Unchanged) ---
 class SuppressStderr:
     def __enter__(self): self.original_stderr = sys.stderr; self.devnull = open(os.devnull, 'w'); sys.stderr = self.devnull
     def __exit__(self, exc_type, exc_val, exc_tb): sys.stderr = self.original_stderr; self.devnull.close()
 
-# --- THIS IS THE CORRECTED SCRAPER FUNCTION ---
+class SuppressALSAErrors:
+    def __enter__(self): self.original_stderr_fd = sys.stderr.fileno(); self.saved_stderr_fd = os.dup(self.original_stderr_fd); self.devnull_fd = os.open(os.devnull, os.O_WRONLY); os.dup2(self.devnull_fd, self.original_stderr_fd)
+    def __exit__(self, exc_type, exc_val, exc_tb): os.dup2(self.saved_stderr_fd, self.original_stderr_fd); os.close(self.devnull_fd); os.close(self.saved_stderr_fd)
+
+# --- Helper Functions (Unchanged) ---
 def get_latest_news():
-    """
-    Scrapes the Wikipedia Current Events portal's main content area.
-    This is a general approach that is more reliable than targeting specific sections.
-    """
-    url = "https://en.wikipedia.org/wiki/Portal:Current_events"
-    headlines = []
-    
+    url = "https://en.wikipedia.org/wiki/Portal:Current_events"; headlines = []
     try:
-        print("--> Fetching latest news from Wikipedia...")
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # --- THE NEW, ROBUST SELECTOR ---
-        # Find the main content div, then get all list items inside it.
-        # This is much less likely to break than targeting a specific, changing ID.
+        print("--> Fetching news..."); headers = {'User-Agent': 'Mozilla/5.0'}; response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status(); soup = BeautifulSoup(response.text, 'html.parser')
         news_items = soup.select('div#bodyContent li')
-        
-        if not news_items:
-            return "Could not find any list items in the main content of the page."
-
+        if not news_items: return "Could not find list items."
         for item in news_items:
-            # Clean up the text
-            text = item.get_text(strip=True).replace('(pictured)', '').replace('[edit]', '')
-            # Ignore very short or junk list items
-            if len(text) > 20: # Increased length check to filter out more junk
-                headlines.append(text)
-            
-        if headlines:
-            # We'll limit the output to the first 7 clean headlines to keep it manageable
-            return " | ".join(headlines[:7])
-        else:
-            return "Could not find any valid news headlines in the main content."
+            text = item.get_text(strip=True).replace('(pictured)', '').replace('[edit]', '');
+            if len(text) > 20: headlines.append(text)
+        if headlines: return " | ".join(headlines[:7])
+        else: return "Could not find valid headlines."
+    except Exception as e: print(f"!!! Error scraping: {e}"); return "Error parsing news."
 
-    except requests.exceptions.RequestException as e:
-        print(f"!!! Error fetching the webpage: {e}")
-        return "Error: Could not connect to the internet."
-    except Exception as e:
-        print(f"!!! An error occurred during scraping: {e}")
-        return "Error: Could not parse the news page."
-
-
-# --- All other helper functions and the main() loop are UNCHANGED ---
 def load_history(history_path):
-    print("--- Loading Context ---")
+    print("--- Loading Context ---");
     if history_path is None: return None
     if os.path.exists(history_path):
         try:
             with open(history_path, "r") as f: print(f"--> Resuming from: '{history_path}'"); return json.load(f)
         except Exception as e: print(f"--> WARNING: Unreadable history: {e}"); return None
-    else: print(f"--> New history will be created at: '{history_path}'"); return None
+    else: print(f"--> New history at: '{history_path}'"); return None
+
 def get_system_prompt(prompt_path):
-    if prompt_path is None: print("--> Using empty system prompt."); return [{"role": "system", "content": ""}]
+    if prompt_path is None: print("--> Using empty prompt."); return [{"role": "system", "content": ""}]
     try:
         with open(prompt_path, "r", encoding="utf-8") as f: print(f"--> Loading prompt: '{prompt_path}'"); return [{"role": "system", "content": f.read()}]
     except FileNotFoundError: print(f"--> WARNING: Prompt not found. Using empty prompt."); return [{"role": "system", "content": ""}]
     except Exception as e: print(f"--> WARNING: Unreadable prompt: {e}. Using empty prompt."); return [{"role": "system", "content": ""}]
+
 def save_history(messages, history_path):
     if history_path is None: return
     try:
         with open(history_path, "w") as f: json.dump(messages, f, indent=4)
     except Exception as e: print(f"Error saving history: {e}")
 
-
-def main():
-    parser = argparse.ArgumentParser(description="An AI chat terminal with Arduino integration.")
-    parser.add_argument('-p', '--prompt', type=str, help="Path to the system prompt text file.")
-    parser.add_argument('-H', '--history', type=str, help="Path to conversation history JSON file.")
-    args = parser.parse_args()
-
+def main_loop(recognizer, microphone, args):
+    """ The main application logic loop with data chunking. """
     global ser
-    
     if USE_ARDUINO:
         try:
-            print("--- Arduino Connection ---"); print(f"Attempting to connect on port: {SERIAL_PORT}")
-            ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-            time.sleep(2) 
+            print("--- Arduino Connection ---"); ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1); time.sleep(2) 
             print("Arduino connection successful."); print("--------------------------")
         except serial.SerialException as e: print(f"!!! ARDUINO FAILED TO CONNECT: {e}"); ser = None
 
@@ -118,7 +84,25 @@ def main():
     print("\n--- Chat with the AI (type 'news' or 'update' for headlines) ---")
 
     while True:
-        user_input = input("You: ")
+        user_input = None
+        if recognizer and microphone:
+            print("You (speak now, or press Enter to type): ", end="", flush=True)
+            try:
+                with microphone as source:
+                    audio = recognizer.listen(source, timeout=4, phrase_time_limit=15)
+                print("\r>>> Recognizing...                        ", end="", flush=True)
+                user_input = recognizer.recognize_google(audio)
+                print(f"\rYou: {user_input}                             ")
+            except sr.WaitTimeoutError:
+                print("\rYou (typing): ", end="", flush=True)
+                user_input = input()
+            except (sr.UnknownValueError, sr.RequestError):
+                print("\r(Could not understand audio, please type instead)")
+                user_input = input("You (typing): ")
+        else:
+            user_input = input("You: ")
+
+        if not user_input: continue
         if user_input.lower() in ["quit", "exit"]: break
 
         if user_input.lower() in ["news", "update"]:
@@ -127,23 +111,24 @@ def main():
             if ser:
                 try:
                     message_to_send = f"GEMMA:{news_string}\n"
-                    print(f"--- [Sending News to Arduino: {len(message_to_send)} bytes] ---")
                     ser.write(message_to_send.encode('utf-8'))
-                except serial.SerialException as e:
-                    print(f"--- (Error sending news to Arduino: {e}) ---")
+                    ser.flush()
+                except serial.SerialException as e: print(f"!!! (Error sending news: {e}) !!!")
             continue
 
         if ser:
             try:
-                user_question_clean = user_input.strip().replace('\n', ' ')
+                user_question_clean = user_input.strip().replace('\n', ' ');
                 user_question_to_send = f"USER:{user_question_clean}\n"
                 ser.write(user_question_to_send.encode('utf-8'))
-            except serial.SerialException as e: print(f"--- (Error sending user question: {e}) ---")
+                ser.flush()
+            except serial.SerialException as e: print(f"!!! (Error sending user question: {e}) !!!")
         
         messages.append({"role": "user", "content": user_input})
         response_stream = llm.create_chat_completion(messages=messages, **generation_params)
         assistant_response_full = ""
-        print("Guide: ", end="", flush=True)
+        print("AI: ", end="", flush=True)
+
         for chunk in response_stream:
             delta = chunk['choices'][0]['delta']
             if "content" in delta:
@@ -151,21 +136,69 @@ def main():
                 print(text_chunk, end="", flush=True)
                 assistant_response_full += text_chunk
         print()
+
         messages.append({"role": "assistant", "content": assistant_response_full.strip()})
         
+        # --- NEW CHUNKING LOGIC TO SEND DATA TO ARDUINO ---
         if ser:
             try:
                 gemma_response_clean = assistant_response_full.strip().replace('\n', ' ')
-                gemma_response_to_send = f"GEMMA:{gemma_response_clean}\n"
-                print(f"--- [Sending to Arduino: {len(gemma_response_to_send)} bytes] ---")
-                ser.write(gemma_response_to_send.encode('utf-8'))
-            except serial.SerialException as e: print(f"--- (Error sending Gemma response: {e}) ---")
+                # Arduino buffer is 256, chunk size of 200 is very safe.
+                CHUNK_SIZE = 200 
+
+                if len(gemma_response_clean) <= CHUNK_SIZE:
+                    # Message is short, send with the simple "GEMMA:" prefix
+                    message_to_send = f"GEMMA:{gemma_response_clean}\n"
+                    print(f"--- [DEBUG] Sending single packet ({len(message_to_send)} bytes)... ---")
+                    ser.write(message_to_send.encode('utf-8'))
+                    ser.flush()
+                else:
+                    # Message is long, send in chunks
+                    print(f"--- [DEBUG] Sending long message in chunks... ---")
+                    
+                    # Send the first chunk with "GEMMA_START:"
+                    first_chunk = gemma_response_clean[:CHUNK_SIZE]
+                    message_to_send = f"GEMMA_START:{first_chunk}\n"
+                    ser.write(message_to_send.encode('utf-8'))
+                    ser.flush()
+                    print(f"--- [DEBUG] Sent START chunk ({len(message_to_send)} bytes)... ---")
+                    time.sleep(0.05) # Small delay for Arduino to process
+
+                    # Send the rest of the chunks with "GEMMA_APPEND:"
+                    for i in range(CHUNK_SIZE, len(gemma_response_clean), CHUNK_SIZE):
+                        next_chunk = gemma_response_clean[i:i + CHUNK_SIZE]
+                        message_to_send = f"GEMMA_APPEND:{next_chunk}\n"
+                        ser.write(message_to_send.encode('utf-8'))
+                        ser.flush()
+                        print(f"--- [DEBUG] Sent APPEND chunk ({len(message_to_send)} bytes)... ---")
+                        time.sleep(0.05) # Small delay for Arduino to process
+
+            except serial.SerialException as e:
+                print(f"!!! (Error sending AI response to Arduino: {e}) !!!")
         
         save_history(messages, args.history)
 
-    if ser:
-        ser.close()
-        print("--- Arduino connection closed. ---")
+    if ser: ser.close(); print("--- Arduino connection closed. ---")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="An AI chat terminal with Arduino integration.")
+    parser.add_argument('-p', '--prompt', type=str, help="Path to the system prompt text file.")
+    parser.add_argument('-H', '--history', type=str, help="Path to conversation history JSON file.")
+    args = parser.parse_args()
+
+    recognizer = None
+    microphone = None
+    
+    with SuppressALSAErrors():
+        try:
+            recognizer = sr.Recognizer(); microphone = sr.Microphone()
+            with microphone as source:
+                print("Please wait. Calibrating microphone..."); recognizer.adjust_for_ambient_noise(source, duration=1.5); print("Calibration complete.")
+            main_loop(recognizer, microphone, args)
+        except Exception as e: 
+            print(f"!!! Mic error: {e}. Voice input will be disabled. Continuing in text-only mode.")
+            main_loop(None, None, args)
+        except KeyboardInterrupt:
+            print("\n--- Exiting gracefully ---")
+        finally:
+            print("\nGoodbye!")
