@@ -63,7 +63,7 @@ def save_history(messages, history_path):
     except Exception as e: print(f"Error saving history: {e}")
 
 def main_loop(recognizer, microphone, args):
-    """ The main application logic loop with data chunking. """
+    """ The main application logic loop in microphone-only mode. """
     global ser
     if USE_ARDUINO:
         try:
@@ -85,22 +85,23 @@ def main_loop(recognizer, microphone, args):
 
     while True:
         user_input = None
-        if recognizer and microphone:
-            print("You (speak now, or press Enter to type): ", end="", flush=True)
-            try:
-                with microphone as source:
-                    audio = recognizer.listen(source, timeout=4, phrase_time_limit=15)
-                print("\r>>> Recognizing...                        ", end="", flush=True)
-                user_input = recognizer.recognize_google(audio)
-                print(f"\rYou: {user_input}                             ")
-            except sr.WaitTimeoutError:
-                print("\rYou (typing): ", end="", flush=True)
-                user_input = input()
-            except (sr.UnknownValueError, sr.RequestError):
-                print("\r(Could not understand audio, please type instead)")
-                user_input = input("You (typing): ")
-        else:
-            user_input = input("You: ")
+        # --- MODIFIED: This block now only handles microphone input ---
+        print("You (speak now): ", end="", flush=True)
+        try:
+            with microphone as source:
+                # Increased timeout slightly as there's no rush to get to a text prompt
+                audio = recognizer.listen(source, timeout=5, phrase_time_limit=15)
+            print("\r>>> Recognizing...                        ", end="", flush=True)
+            user_input = recognizer.recognize_google(audio)
+            print(f"\rYou: {user_input}                             ")
+        except (sr.WaitTimeoutError, sr.UnknownValueError, sr.RequestError):
+            # This block now catches all speech recognition issues:
+            # - WaitTimeoutError: User didn't speak in time.
+            # - UnknownValueError: Speech was unclear.
+            # - RequestError: Issue with the API.
+            # In all cases, we loop back and listen again.
+            print("\r(Could not understand audio, please try again.)", end="", flush=True)
+            continue # Immediately restart the loop to listen again
 
         if not user_input: continue
         if user_input.lower() in ["quit", "exit"]: break
@@ -139,40 +140,31 @@ def main_loop(recognizer, microphone, args):
 
         messages.append({"role": "assistant", "content": assistant_response_full.strip()})
         
-        # --- NEW CHUNKING LOGIC TO SEND DATA TO ARDUINO ---
         if ser:
             try:
                 gemma_response_clean = assistant_response_full.strip().replace('\n', ' ')
-                # Arduino buffer is 256, chunk size of 200 is very safe.
                 CHUNK_SIZE = 200 
 
                 if len(gemma_response_clean) <= CHUNK_SIZE:
-                    # Message is short, send with the simple "GEMMA:" prefix
                     message_to_send = f"GEMMA:{gemma_response_clean}\n"
                     print(f"--- [DEBUG] Sending single packet ({len(message_to_send)} bytes)... ---")
                     ser.write(message_to_send.encode('utf-8'))
                     ser.flush()
                 else:
-                    # Message is long, send in chunks
                     print(f"--- [DEBUG] Sending long message in chunks... ---")
-                    
-                    # Send the first chunk with "GEMMA_START:"
                     first_chunk = gemma_response_clean[:CHUNK_SIZE]
                     message_to_send = f"GEMMA_START:{first_chunk}\n"
                     ser.write(message_to_send.encode('utf-8'))
                     ser.flush()
                     print(f"--- [DEBUG] Sent START chunk ({len(message_to_send)} bytes)... ---")
-                    time.sleep(0.05) # Small delay for Arduino to process
-
-                    # Send the rest of the chunks with "GEMMA_APPEND:"
+                    time.sleep(0.05)
                     for i in range(CHUNK_SIZE, len(gemma_response_clean), CHUNK_SIZE):
                         next_chunk = gemma_response_clean[i:i + CHUNK_SIZE]
                         message_to_send = f"GEMMA_APPEND:{next_chunk}\n"
                         ser.write(message_to_send.encode('utf-8'))
                         ser.flush()
                         print(f"--- [DEBUG] Sent APPEND chunk ({len(message_to_send)} bytes)... ---")
-                        time.sleep(0.05) # Small delay for Arduino to process
-
+                        time.sleep(0.05)
             except serial.SerialException as e:
                 print(f"!!! (Error sending AI response to Arduino: {e}) !!!")
         
@@ -185,19 +177,20 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--prompt', type=str, help="Path to the system prompt text file.")
     parser.add_argument('-H', '--history', type=str, help="Path to conversation history JSON file.")
     args = parser.parse_args()
-
-    recognizer = None
-    microphone = None
     
     with SuppressALSAErrors():
         try:
-            recognizer = sr.Recognizer(); microphone = sr.Microphone()
+            recognizer = sr.Recognizer()
+            microphone = sr.Microphone()
             with microphone as source:
                 print("Please wait. Calibrating microphone..."); recognizer.adjust_for_ambient_noise(source, duration=1.5); print("Calibration complete.")
+            # Start the main loop only if microphone setup was successful
             main_loop(recognizer, microphone, args)
         except Exception as e: 
-            print(f"!!! Mic error: {e}. Voice input will be disabled. Continuing in text-only mode.")
-            main_loop(None, None, args)
+            # --- MODIFIED: Exit if microphone fails, as it's now required ---
+            print(f"!!! A microphone is required and could not be initialized: {e}")
+            print("!!! Please check your microphone connection and configuration.")
+            exit() # Exit the script
         except KeyboardInterrupt:
             print("\n--- Exiting gracefully ---")
         finally:
