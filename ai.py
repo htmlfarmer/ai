@@ -17,7 +17,7 @@ class SuppressStderr:
     def __exit__(self, exc_type, exc_val, exc_tb): sys.stderr = self.original_stderr; self.devnull.close()
 
 # --- Global constants ---
-model_path = "/home/asher/.lmstudio/models/lmstudio-community/gemma-3-1b-it-GGUF/gemma-3-1b-it-Q4_K_M.gguf"
+model_path = "/home/asher/.lmstudio/models/lmstudio-community/gemma-3-1b-it-GGUF/-it-Q4_K_M.gguf"
 
 # --- Serial Port Configuration ---
 SERIAL_PORT = '/dev/ttyACM0' 
