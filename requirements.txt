@@ -1,0 +1,7 @@
+feedparser
+requests
+beautifulsoup4
+geopy
+spacy
+# if you plan to use the small English model:
+# python -m spacy download en_core_web_sm

@@ -1,0 +1,22 @@
+[
+    {
+        "question": "hi",
+        "answer": "Hi there! How can I help you today? \ud83d\ude0a \n\nLet me know what\u2019s on your mind \u2013 whether you need a quick question, want to chat about something, or just looking for some friendly conversation."
+    },
+    {
+        "question": "OK cool ... so what else?",
+        "answer": "Let's see\u2026 how about we start with a little bit of fun? \n\n**Would you like to:**\n\n*   **Tell me a random fact?** (I\u2019ll pick one!)\n*   **Play a quick word game?** (Like 20 questions or I Spy?)\n*   **Or, if you're feeling creative, tell me a short story idea?**"
+    },
+    {
+        "question": "whats up?",
+        "answer": "Hey there! \ud83d\ude0a\n\nNot too much, just here to help out. What\u2019s up with *you*? Anything interesting happening today? Do you want to chat about anything in particular \u2013 like a hobby, news, or just want to pass the time?"
+    },
+    {
+        "question": "yo so what was teh last topic?",
+        "answer": "Hello there! \ud83d\ude0a \n\nThe last topic we discussed was about [State the last topic you were discussing \u2013 e.g., creative writing prompts, different types of dogs, or perhaps a recipe]. \n\nIt was really fun chatting with you! \ud83d\ude0a \n\nIs there anything else I can help you with today?"
+    },
+    {
+        "question": "sure... mostly the weather its cold in chicago?",
+        "answer": "You're right! Chicago is definitely experiencing a chilly spell. \ud83e\udd76 It\u2019s quite the weather we\u2019ve been having!\n\nDo you want to talk about it more? Maybe:\n\n*   **Share a funny story about the cold?**\n*   **Discuss what you do when it's cold?** (Like, cozy activities!)\n*   **Just generally chat about how you feel about the weather?**"
+    }
+]
