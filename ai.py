@@ -20,24 +20,8 @@ class AIModel:
         Initializes the AI model by loading it into memory.
         """
         self.llm = None
-        self.system_prompt_path = "/home/asher/private/O3.txt"
         self.default_system_prompt = "You are a helpful assistant. Keep your answers concise."
         self.max_system_prompt_chars = 8000 # A safe character limit to avoid context overflow
-        self.system_prompt_name = None
-
-        try:
-            if os.path.exists(self.system_prompt_path):
-                with open(self.system_prompt_path, 'r') as f:
-                    prompt_content = f.read().strip()
-                    if len(prompt_content) > self.max_system_prompt_chars:
-                        print(f"!!! WARNING: System prompt from {self.system_prompt_path} was too long and has been truncated to {self.max_system_prompt_chars} characters.")
-                        self.default_system_prompt = prompt_content[:self.max_system_prompt_chars]
-                    else:
-                        self.default_system_prompt = prompt_content
-                self.system_prompt_name = "O3"
-                print(f"--> AI Core: Loaded system prompt from {self.system_prompt_path}")
-        except Exception as e:
-            print(f"!!! WARNING: Could not load system prompt file: {e}")
 
         self.config = {
             "model_path": "/home/asher/.lmstudio/models/lmstudio-community/gemma-3-1b-it-GGUF/gemma-3-1b-it-Q4_K_M.gguf",
@@ -70,7 +54,7 @@ class AIModel:
             os.system(f'notify-send "AI Model Error" "Could not load the language model. Check terminal." -i error')
 
 
-    def ask(self, user_question, additional_system_prompt, generation_params):
+    def ask(self, user_question, system_prompt_override, generation_params):
         """
         Takes a user's question and params, gets a response from the model, and returns it as a stream generator.
         """
@@ -78,9 +62,7 @@ class AIModel:
             yield "Error: The AI model is not loaded."
             return
 
-        final_system_prompt = self.default_system_prompt
-        if additional_system_prompt:
-            final_system_prompt += "\n\n" + additional_system_prompt
+        final_system_prompt = system_prompt_override if system_prompt_override else self.default_system_prompt
 
         # Truncate system_prompt if it's too long to prevent crashes
         if len(final_system_prompt) > self.max_system_prompt_chars:
@@ -171,12 +153,7 @@ HTML_TEMPLATE = """
             <summary>Advanced Options</summary>
             <div class="param-grid">
                 <label for="system_prompt">System Prompt:</label>
-                <div>
-                    {% if system_prompt_name %}
-                    <p class="prompt-notice">Private prompt '{{ system_prompt_name }}' is loaded. You can add more instructions below.</p>
-                    {% endif %}
-                    <textarea id="system_prompt" placeholder="Add additional system instructions here..."></textarea>
-                </div>
+                <textarea id="system_prompt" placeholder="{{ default_system_prompt }}"></textarea>
                 
                 <label for="temperature">Temperature:</label>
                 <div class="slider-container">
@@ -229,10 +206,6 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        // Set initial system prompt safely, handling newlines and special characters
-        // const initialSystemPrompt = {{ system_prompt|tojson }};
-        // document.getElementById('system_prompt').value = initialSystemPrompt;
-
         function setupSlider(sliderId, displayId) {
             const slider = document.getElementById(sliderId);
             const display = document.getElementById(displayId);
@@ -308,7 +281,7 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE, system_prompt_name=ai_model.system_prompt_name)
+    return render_template_string(HTML_TEMPLATE, default_system_prompt=ai_model.default_system_prompt)
 
 @app.route('/ask', methods=['POST'])
 def ask_route():
@@ -317,7 +290,7 @@ def ask_route():
         return "Error: No question provided", 400
 
     user_question = data['question']
-    additional_system_prompt = data.get('system_prompt', '')
+    system_prompt_override = data.get('system_prompt', '')
     
     generation_params = {
         'temperature': data.get('temperature'),
@@ -331,7 +304,7 @@ def ask_route():
     }
 
     def generate():
-        for chunk in ai_model.ask(user_question, additional_system_prompt, generation_params):
+        for chunk in ai_model.ask(user_question, system_prompt_override, generation_params):
             yield chunk
 
     return app.response_class(generate(), mimetype='text/plain')
@@ -340,7 +313,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run AI model as a web server or a single-shot command.")
     parser.add_argument('--cli', action='store_true', help='Run in command-line mode for use with scripts (e.g., PHP).')
     parser.add_argument('-q', '--question', type=str, help='Question to ask the model in CLI mode.')
-    parser.add_argument('-s', '--system_prompt', type=str, default=None, help='Additional system prompt to append to the default one in CLI mode.')
+    parser.add_argument('-s', '--system_prompt', type=str, default=None, help='System prompt to use, overriding the default.')
     
     # Add other generation params for CLI
     parser.add_argument('-t', '--temperature', type=float, default=None)
@@ -356,13 +329,13 @@ if __name__ == '__main__':
 
     # If --question is passed, run in CLI mode
     if args.question:
-        additional_system_prompt = args.system_prompt
+        system_prompt_override = args.system_prompt
         
         generation_params = {
             k: v for k, v in vars(args).items() if v is not None and k not in ['cli', 'question', 'system_prompt']
         }
 
-        for chunk in ai_model.ask(args.question, additional_system_prompt, generation_params):
+        for chunk in ai_model.ask(args.question, system_prompt_override, generation_params):
             print(chunk, end='', flush=True)
         print() # Final newline
     else:
