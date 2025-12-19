@@ -1,4 +1,5 @@
 import gi
+import os
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Pango
 
@@ -12,12 +13,15 @@ class ResponseWindow(Gtk.Window):
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_border_width(10)
 
+        # Get font size from env var, default to 12pt
+        self.font_size_pt = int(os.environ.get("AI_FONT_SIZE", 12))
+
         # Create text tags for styling the chat log
         self.textbuffer = Gtk.TextBuffer()
-        self.textbuffer.create_tag("user_question", weight=Pango.Weight.BOLD, foreground="#3465a4")
-        self.textbuffer.create_tag("ai_response", foreground="#4e9a06")
-        self.textbuffer.create_tag("info_text", foreground="#888a85", style=Pango.Style.ITALIC)
-        self.textbuffer.create_tag("error_text", foreground="#cc0000", style=Pango.Style.ITALIC)
+        self.textbuffer.create_tag("user_question", weight=Pango.Weight.BOLD, foreground="#3465a4", size=self.font_size_pt * 1024)
+        self.textbuffer.create_tag("ai_response", foreground="#4e9a06", size=self.font_size_pt * 1024)
+        self.textbuffer.create_tag("info_text", foreground="#888a85", style=Pango.Style.ITALIC, size=self.font_size_pt * 1024)
+        self.textbuffer.create_tag("error_text", foreground="#cc0000", style=Pango.Style.ITALIC, size=self.font_size_pt * 1024)
 
         # --- UI Layout ---
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -54,10 +58,8 @@ class ResponseWindow(Gtk.Window):
         self.status_bar = Gtk.Box(spacing=15)
         self.mem_label = Gtk.Label(label="Mem: ...")
         self.cpu_label = Gtk.Label(label="CPU: ...")
-        self.peak_mem_label = Gtk.Label(label="Last Peak: ...")
         self.status_bar.pack_start(self.mem_label, False, False, 0)
         self.status_bar.pack_start(self.cpu_label, False, False, 0)
-        self.status_bar.pack_start(self.peak_mem_label, False, False, 0)
         vbox.pack_start(self.status_bar, False, True, 0)
 
         self.append_to_log("Welcome to your AI Assistant! Ask a question to get started.", "info_text")
@@ -78,11 +80,9 @@ class ResponseWindow(Gtk.Window):
     def on_stop_clicked(self, widget):
         self.app_controller.stop_generation()
 
-    def update_stats(self, mem_mb, cpu_percent, peak_mem_mb):
+    def update_stats(self, mem_mb, cpu_percent):
         self.mem_label.set_text(f"Mem: {mem_mb:.1f} MB")
         self.cpu_label.set_text(f"CPU: {cpu_percent:.1f}%")
-        if peak_mem_mb >= 0:
-            self.peak_mem_label.set_text(f"Last Peak: {peak_mem_mb:.1f} MB")
 
     def toggle_inputs(self, is_enabled):
         self.input_entry.set_sensitive(is_enabled)
