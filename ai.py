@@ -104,15 +104,35 @@ class AIModel:
 
 # --- Web Interface (using Flask) ---
 
-# Check if model loaded successfully before starting the web server
-ai_model = AIModel()
-if not ai_model.llm:
-    print("!!! FATAL: AI Model not loaded. Web server will not start.")
-    exit()
+if __name__ == '__main__':
+    # Check if model loaded successfully before starting the web server
+    ai_model = AIModel()
+    if not ai_model.llm:
+        print("!!! FATAL: AI Model not loaded. Web server will not start.")
+        exit()
 
-app = Flask(__name__)
+    parser = argparse.ArgumentParser(description="Run AI model as a web server or an interactive/single-shot CLI.")
+    parser.add_argument('--web', action='store_true', help='Run the Flask web server.')
+    parser.add_argument('-q', '--question', type=str, help='Ask a single question and exit.')
+    parser.add_argument('-s', '--system_prompt', type=str, default=None, help='System prompt to use, overriding the default.')
+    
+    # Add other generation params for CLI
+    parser.add_argument('-t', '--temperature', type=float, default=None)
+    parser.add_argument('--top_k', type=int, default=None)
+    parser.add_argument('--top_p', type=float, default=None)
+    parser.add_argument('--repeat_penalty', type=float, default=None)
+    parser.add_argument('--max_tokens', type=int, default=None)
+    parser.add_argument('--mirostat_mode', type=int, default=None)
+    parser.add_argument('--mirostat_tau', type=float, default=None)
+    parser.add_argument('--mirostat_eta', type=float, default=None)
 
-HTML_TEMPLATE = """
+    args = parser.parse_args()
+
+    # --- Web Server Mode ---
+    if args.web:
+        app = Flask(__name__)
+
+        HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -278,67 +298,72 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+        @app.route('/')
+        def index():
+            return render_template_string(HTML_TEMPLATE, default_system_prompt=ai_model.default_system_prompt)
 
-@app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE, default_system_prompt=ai_model.default_system_prompt)
+        @app.route('/ask', methods=['POST'])
+        def ask_route():
+            data = request.get_json()
+            if not data or not data.get('question'):
+                return "Error: No question provided", 400
 
-@app.route('/ask', methods=['POST'])
-def ask_route():
-    data = request.get_json()
-    if not data or not data.get('question'):
-        return "Error: No question provided", 400
+            user_question = data['question']
+            system_prompt_override = data.get('system_prompt', '')
+            
+            generation_params = {
+                'temperature': data.get('temperature'),
+                'top_k': data.get('top_k'),
+                'top_p': data.get('top_p'),
+                'repeat_penalty': data.get('repeat_penalty'),
+                'max_tokens': data.get('max_tokens'),
+                'mirostat_mode': data.get('mirostat_mode'),
+                'mirostat_tau': data.get('mirostat_tau'),
+                'mirostat_eta': data.get('mirostat_eta'),
+            }
 
-    user_question = data['question']
-    system_prompt_override = data.get('system_prompt', '')
-    
-    generation_params = {
-        'temperature': data.get('temperature'),
-        'top_k': data.get('top_k'),
-        'top_p': data.get('top_p'),
-        'repeat_penalty': data.get('repeat_penalty'),
-        'max_tokens': data.get('max_tokens'),
-        'mirostat_mode': data.get('mirostat_mode'),
-        'mirostat_tau': data.get('mirostat_tau'),
-        'mirostat_eta': data.get('mirostat_eta'),
-    }
+            def generate():
+                for chunk in ai_model.ask(user_question, system_prompt_override, generation_params):
+                    yield chunk
 
-    def generate():
-        for chunk in ai_model.ask(user_question, system_prompt_override, generation_params):
-            yield chunk
+            return app.response_class(generate(), mimetype='text/plain')
 
-    return app.response_class(generate(), mimetype='text/plain')
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run AI model as a web server or a single-shot command.")
-    parser.add_argument('--cli', action='store_true', help='Run in command-line mode for use with scripts (e.g., PHP).')
-    parser.add_argument('-q', '--question', type=str, help='Question to ask the model in CLI mode.')
-    parser.add_argument('-s', '--system_prompt', type=str, default=None, help='System prompt to use, overriding the default.')
-    
-    # Add other generation params for CLI
-    parser.add_argument('-t', '--temperature', type=float, default=None)
-    parser.add_argument('--top_k', type=int, default=None)
-    parser.add_argument('--top_p', type=float, default=None)
-    parser.add_argument('--repeat_penalty', type=float, default=None)
-    parser.add_argument('--max_tokens', type=int, default=None)
-    parser.add_argument('--mirostat_mode', type=int, default=None)
-    parser.add_argument('--mirostat_tau', type=float, default=None)
-    parser.add_argument('--mirostat_eta', type=float, default=None)
-
-    args = parser.parse_args()
-
-    # If --question is passed, run in CLI mode
-    if args.question:
-        system_prompt_override = args.system_prompt
-        
-        generation_params = {
-            k: v for k, v in vars(args).items() if v is not None and k not in ['cli', 'question', 'system_prompt']
-        }
-
-        for chunk in ai_model.ask(args.question, system_prompt_override, generation_params):
-            print(chunk, end='', flush=True)
-        print() # Final newline
-    else:
         print("--> Web Server: Starting Flask server...")
         print("--> Web Server: Access the web UI at http://127.0.0.1:5000")
         app.run(host='0.0.0.0', port=5000)
+
+    # --- Single Question CLI Mode ---
+    elif args.question:
+        system_prompt_override = args.system_prompt
+        generation_params = {
+            k: v for k, v in vars(args).items() if v is not None and k not in ['web', 'question', 'system_prompt']
+        }
+        for chunk in ai_model.ask(args.question, system_prompt_override, generation_params):
+            print(chunk, end='', flush=True)
+        print()
+
+    # --- Interactive CLI Mode (Default) ---
+    else:
+        print("--> AI Chat: Starting interactive session. Type 'exit' or 'quit' to end.")
+        system_prompt_override = args.system_prompt
+        generation_params = {
+            k: v for k, v in vars(args).items() if v is not None and k not in ['web', 'question', 'system_prompt']
+        }
+        
+        while True:
+            try:
+                user_question = input("\nYou: ")
+                if user_question.lower() in ['exit', 'quit']:
+                    break
+                
+                print("AI: ", end='', flush=True)
+                for chunk in ai_model.ask(user_question, system_prompt_override, generation_params):
+                    print(chunk, end='', flush=True)
+                print()
+
+            except KeyboardInterrupt:
+                print("\n--> AI Chat: Session ended.")
+                break
+            except Exception as e:
+                print(f"\nAn error occurred: {e}")
+                break

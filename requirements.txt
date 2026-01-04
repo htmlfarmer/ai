@@ -3,5 +3,8 @@ requests
 beautifulsoup4
 geopy
 spacy
+selenium
+webdriver-manager
+SPARQLWrapper
 # if you plan to use the small English model:
 # python -m spacy download en_core_web_sm
