@@ -17,15 +17,15 @@ def get_city_data():
     # The SPARQL query gets cities, their population, country, and coordinates.
     # We limit it to 25 for this example to avoid very long run times.
     query = """
-    SELECT ?cityLabel ?countryLabel ?population ?location WHERE {
-      ?city wdt:P31/wdt:P279* wd:Q515.  # instance of a city
+    SELECT DISTINCT ?cityLabel ?countryLabel ?population ?location WHERE {
+      ?city wdt:P31 wd:Q515.  # instance of a city
       ?city wdt:P1082 ?population.
-      FILTER(?population > 30000).
+      FILTER(?population > 100000).
       ?city wdt:P17 ?country.
       ?city wdt:P625 ?location.
       SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }
     }
-    LIMIT 5
+    LIMIT 3
     """
 
     sparql = SPARQLWrapper(endpoint_url)
@@ -50,18 +50,29 @@ def analyze_city_data(city_data, ai_model):
     city_name = city_data.get('cityLabel', {}).get('value', 'N/A')
     country_name = city_data.get('countryLabel', {}).get('value', 'N/A')
     population = city_data.get('population', {}).get('value', 'N/A')
-    location = city_data.get('location', {}).get('value', 'N/A')
+    location_str = city_data.get('location', {}).get('value', 'Point(0 0)')
+
+    # Correct the coordinate order from lng lat to lat lng
+    formatted_coords = "N/A"
+    try:
+        # Extracts "lng lat" from "Point(lng lat)"
+        coords = location_str.replace('Point(', '').replace(')', '').split()
+        if len(coords) == 2:
+            lng, lat = coords
+            formatted_coords = f"{lat}, {lng}"
+    except (ValueError, IndexError):
+        pass # Keep "N/A" if format is unexpected
 
     prompt_data = {
         "city": city_name,
         "country": country_name,
         "population": population,
-        "coordinates": location
+        "coordinates": formatted_coords
     }
 
     prompt = f"""
     As a data validator, analyze the following city data for obvious inconsistencies.
-    - Does the coordinate location make sense for the city and country?
+    - Does the coordinate location (lat, lng) make sense for the city and country?
     - Does the population figure seem plausible for this city, or is it obviously incorrect (e.g., a tiny village with millions of people, or a major metropolis with a population of 100)?
 
     Provide your analysis in a JSON format with three keys:
@@ -139,10 +150,9 @@ if __name__ == '__main__':
             city_name = city.get('cityLabel', {}).get('value', 'N/A')
             print(f"  -> Analyzing {city_name}...")
             result = analyze_city_data(city, ai_model)
+            print(json.dumps(result, indent=2))
             all_results.append(result)
         
-        print("\n--- Analysis Complete ---")
-        print(json.dumps(all_results, indent=2))
         print_results_table(all_results)
     else:
         print("!!! FATAL: Could not retrieve city data.")
